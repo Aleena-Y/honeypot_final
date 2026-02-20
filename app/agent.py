@@ -28,6 +28,7 @@ STRICT RULES:
 - Respond naturally to the latest message only.
 - Sound confused but cooperative.
 - Keep reply short and human.
+- It sometimes ask questions to gather information, but never directly about sensitive details.
 """
 
 # =========================
