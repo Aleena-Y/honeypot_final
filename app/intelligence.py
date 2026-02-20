@@ -3,6 +3,54 @@ import re
 from typing import List, Dict, Optional, Set
 
 
+SUSPICIOUS_TLDS = (
+    "xyz", "top", "ru", "tk", "ml", "ga", "cf", "gq",
+    "work", "click", "support", "loan", "win", "vip",
+)
+
+SHORTENERS = (
+    "bit.ly", "tinyurl.com", "goo.gl", "t.co", "ow.ly",
+    "rb.gy", "is.gd", "buff.ly", "cutt.ly", "shorturl.at",
+)
+
+
+def extract_phishing_links(text: str) -> List[str]:
+    links: Set[str] = set()
+
+    # 1) Standard http/https URLs
+    links.update(re.findall(r"https?://[^\s)>\"]+", text))
+
+    # 2) URLs without protocol (www.)
+    links.update(re.findall(r"\bwww\.[^\s)>\"]+", text))
+
+    # 3) IP-based URLs
+    links.update(re.findall(r"https?://\d{1,3}(?:\.\d{1,3}){3}[^\s]*", text))
+
+    # 4) Shortened URLs
+    for short in SHORTENERS:
+        pattern = rf"https?://{re.escape(short)}/[^\s)>\"]+"
+        links.update(re.findall(pattern, text))
+
+    # 5) Suspicious TLD domains (with optional path/query)
+    suspicious_tlds = "|".join(map(re.escape, SUSPICIOUS_TLDS))
+    # Avoid treating email domains (e.g., user@domain.xyz) as links.
+    # Avoid matching inside already captured protocol URLs (e.g., https://domain.xyz/path).
+    suspicious_pattern = rf"(?<!@)(?<!://)\b(?:[a-zA-Z0-9-]+\.)+(?:{suspicious_tlds})\b[^\s)>\"]*"
+    links.update(re.findall(suspicious_pattern, text))
+
+    # 6) Payment & messaging deep links
+    links.update(re.findall(r"(upi://pay\?[^\s]+)", text))
+    links.update(re.findall(r"(paytmmp://[^\s]+)", text))
+    links.update(re.findall(r"(phonepe://[^\s]+)", text))
+
+    # Normalize trivial trailing punctuation commonly found in sentences.
+    normalized: Set[str] = set()
+    for link in links:
+        normalized.add(link.strip().rstrip(".,;:!?"))
+
+    return sorted(filter(None, normalized))
+
+
 # Convert digit words -> numbers
 DIGIT_WORDS = {
     "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
@@ -97,7 +145,7 @@ def extract_intelligence(messages: List[Dict], store: dict):
     email_addresses = set(store.get("emailAddresses", []))
     suspicious_keywords = set(store.get("suspiciousKeywords", []))
     
-    # Extract only from messages with sender="scammer"
+    # Extract only from messages with any sender other than victime
     scammer_text = " ".join(
         str(msg.get("text",""))
         for msg in messages
@@ -126,9 +174,8 @@ def extract_intelligence(messages: List[Dict], store: dict):
     # Extract globally formatted phone numbers (with obfuscation normalization)
     phone_numbers.update(extract_phone_numbers(scammer_text))
     
-    # Extract URLs
-    links = re.findall(r"https?://[^\s]+", scammer_text)
-    phishing_links.update(links)
+    # Extract phishing / suspicious links
+    phishing_links.update(extract_phishing_links(scammer_text))
     
     # Extract suspicious keywords
     keywords = ["urgent", "verify", "blocked", "otp", "suspend", "freeze", "compromise", "expire", "immediate"]

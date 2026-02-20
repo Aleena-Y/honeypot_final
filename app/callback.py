@@ -27,8 +27,24 @@ def _build_extracted_intelligence(intelligence: dict) -> dict:
 def send_final_callback(session_id, session_data):
     intelligence = session_data.get("intelligence") or {}
     suspicious_keywords = intelligence.get("suspiciousKeywords") or []
+
+    scam_scenarios = intelligence.get("scamScenarios") or {}
+    scenario_note = ""
+    if isinstance(scam_scenarios, dict) and scam_scenarios:
+        parts = []
+        for scenario, matches in scam_scenarios.items():
+            if not matches:
+                continue
+            parts.append(f"{scenario} ({', '.join(map(str, matches))})")
+        if parts:
+            scenario_note = "Detected scenarios: " + "; ".join(parts)
+
     agent_notes = "Potential scam pattern detected; asked for verification details."
-    if suspicious_keywords:
+    if scenario_note and suspicious_keywords:
+        agent_notes = f"{scenario_note}. Suspicious keywords observed: {', '.join(map(str, suspicious_keywords))}"
+    elif scenario_note:
+        agent_notes = scenario_note
+    elif suspicious_keywords:
         agent_notes = f"Suspicious keywords observed: {', '.join(map(str, suspicious_keywords))}"
 
     payload = {

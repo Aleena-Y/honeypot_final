@@ -11,7 +11,8 @@ def get_session(session_id):
                 "phishingLinks": [],
                 "phoneNumbers": [],
                 "emailAddresses": [],
-                "suspiciousKeywords": []
+                "suspiciousKeywords": [],
+                "scamScenarios": {}
             },
             "scamDetected": False
         }
