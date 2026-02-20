@@ -54,6 +54,17 @@ def _compute_engagement_duration_seconds(messages) -> int:
         return delta // 1000
     return delta
 
+
+def _derive_session_id(session_id, session_data) -> str:
+    if session_id is not None and str(session_id).strip() != "":
+        return str(session_id)
+    if isinstance(session_data, dict):
+        for key in ("sessionId", "session_id", "id"):
+            value = session_data.get(key)
+            if value is not None and str(value).strip() != "":
+                return str(value)
+    return ""
+
 def send_final_callback(session_id, session_data):
     intelligence = session_data.get("intelligence") or {}
     suspicious_keywords = intelligence.get("suspiciousKeywords") or []
@@ -77,8 +88,12 @@ def send_final_callback(session_id, session_data):
     elif suspicious_keywords:
         agent_notes = f"Suspicious keywords observed: {', '.join(map(str, suspicious_keywords))}"
 
+    derived_session_id = _derive_session_id(session_id, session_data)
+    if not derived_session_id:
+        logger.warning("Final callback missing sessionId")
+
     payload = {
-        "sessionId": session_id,
+        "sessionId": derived_session_id,
         "scamDetected": bool(session_data.get("scamDetected", False)),
         "totalMessagesExchanged": len(session_data.get("messages", [])),
         "engagementDurationSeconds": _compute_engagement_duration_seconds(session_data.get("messages", [])),
