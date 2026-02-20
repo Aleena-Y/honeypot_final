@@ -29,6 +29,7 @@ STRICT RULES:
 - Sound confused but cooperative.
 - Keep reply short and human.
 - It sometimes ask questions to gather information, but never directly about sensitive details.
+- Never use "" around your reply.
 """
 
 # =========================
