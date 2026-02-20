@@ -24,6 +24,36 @@ def _build_extracted_intelligence(intelligence: dict) -> dict:
         "emailAddresses": _coerce_list(intelligence.get("emailAddresses")),
     }
 
+
+def _compute_engagement_duration_seconds(messages) -> int:
+    if not isinstance(messages, list) or not messages:
+        return 0
+
+    timestamps = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        ts = msg.get("timestamp")
+        if ts is None:
+            continue
+        try:
+            ts_int = int(ts)
+        except (TypeError, ValueError):
+            continue
+        timestamps.append(ts_int)
+
+    if len(timestamps) < 2:
+        return 0
+
+    start = min(timestamps)
+    end = max(timestamps)
+    delta = max(0, end - start)
+
+    # Heuristic: timestamps above 1e12 are likely epoch milliseconds.
+    if start > 1_000_000_000_000 or end > 1_000_000_000_000:
+        return delta // 1000
+    return delta
+
 def send_final_callback(session_id, session_data):
     intelligence = session_data.get("intelligence") or {}
     suspicious_keywords = intelligence.get("suspiciousKeywords") or []
@@ -51,6 +81,7 @@ def send_final_callback(session_id, session_data):
         "sessionId": session_id,
         "scamDetected": bool(session_data.get("scamDetected", False)),
         "totalMessagesExchanged": len(session_data.get("messages", [])),
+        "engagementDurationSeconds": _compute_engagement_duration_seconds(session_data.get("messages", [])),
         "extractedIntelligence": _build_extracted_intelligence(intelligence),
         "agentNotes": agent_notes
     }
