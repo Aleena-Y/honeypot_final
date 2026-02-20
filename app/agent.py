@@ -142,6 +142,18 @@ def sanitize_reply(reply):
     if not reply:
         return None
 
+    reply = reply.strip()
+    # Sometimes model output is wrapped like a JSON string: "..." (or smart quotes).
+    # Strip a couple of layers of surrounding quotes to keep replies natural.
+    for _ in range(2):
+        if len(reply) >= 2 and reply[0] == reply[-1] and reply[0] in {'"', "'"}:
+            reply = reply[1:-1].strip()
+            continue
+        if len(reply) >= 2 and reply[0] in {"\u201c", "\u2018"} and reply[-1] in {"\u201d", "\u2019"}:
+            reply = reply[1:-1].strip()
+            continue
+        break
+
     lower = reply.lower()
 
     if re.search(r'\b\d{4,8}\b', lower):
@@ -150,7 +162,7 @@ def sanitize_reply(reply):
     if any(p in lower for p in ["otp is", "pin is", "code is"]):
         return None
 
-    return reply.strip()
+    return reply
 
 # =========================
 # HUMAN VARIATION
