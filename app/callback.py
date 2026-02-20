@@ -6,33 +6,36 @@ from app.config import GUVI_CALLBACK_URL
 logger = logging.getLogger(__name__)
 
 
-def _calculate_engagement_duration_seconds(messages):
-    timestamps = [msg.get("timestamp") for msg in messages if isinstance(msg.get("timestamp"), (int, float))]
-    if len(timestamps) < 2:
-        return 0
+def _coerce_list(value):
+    if isinstance(value, list):
+        return value
+    if value is None:
+        return []
+    return [value]
 
-    min_ts = min(timestamps)
-    max_ts = max(timestamps)
-    diff = max(0, max_ts - min_ts)
 
-    # Heuristic: values above 1e12 are likely milliseconds
-    if max_ts > 1_000_000_000_000:
-        return int(diff / 1000)
-
-    return int(diff)
+def _build_extracted_intelligence(intelligence: dict) -> dict:
+    intelligence = intelligence or {}
+    return {
+        "phoneNumbers": _coerce_list(intelligence.get("phoneNumbers")),
+        "bankAccounts": _coerce_list(intelligence.get("bankAccounts")),
+        "upiIds": _coerce_list(intelligence.get("upiIds")),
+        "phishingLinks": _coerce_list(intelligence.get("phishingLinks")),
+        "emailAddresses": _coerce_list(intelligence.get("emailAddresses")),
+    }
 
 def send_final_callback(session_id, session_data):
-    suspicious_keywords = session_data.get("intelligence", {}).get("suspiciousKeywords", [])
-    agent_notes = "Urgency-based scam detected"
+    intelligence = session_data.get("intelligence") or {}
+    suspicious_keywords = intelligence.get("suspiciousKeywords") or []
+    agent_notes = "Potential scam pattern detected; asked for verification details."
     if suspicious_keywords:
-        agent_notes = f"Detected suspicious intent via keywords: {', '.join(suspicious_keywords)}"
+        agent_notes = f"Suspicious keywords observed: {', '.join(map(str, suspicious_keywords))}"
 
     payload = {
         "sessionId": session_id,
-        "scamDetected": True,
-        "totalMessagesExchanged": len(session_data["messages"]),
-        "engagementDurationSeconds": _calculate_engagement_duration_seconds(session_data["messages"]),
-        "extractedIntelligence": session_data["intelligence"],
+        "scamDetected": bool(session_data.get("scamDetected", False)),
+        "totalMessagesExchanged": len(session_data.get("messages", [])),
+        "extractedIntelligence": _build_extracted_intelligence(intelligence),
         "agentNotes": agent_notes
     }
     try:

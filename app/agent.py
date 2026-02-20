@@ -50,7 +50,7 @@ def generate_reply(conversation):
             json={
                 "model": OPENROUTER_MODEL,
                 "messages": messages,
-                "temperature": 0.7,
+                "temperature": 0.85,
             },
             timeout=30,
         )
