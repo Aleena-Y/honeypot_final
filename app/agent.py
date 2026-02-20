@@ -43,11 +43,47 @@ def _sanitize_reply(reply: str) -> str:
     return sentence
 
 
+def _next_step_from_history(conversation_history) -> str:
+    user_text = " ".join(
+        msg["text"].lower()
+        for msg in conversation_history
+        if msg.get("sender") != "honeypot"
+    )
+
+    last_honeypot = [
+        msg["text"].strip().lower()
+        for msg in conversation_history
+        if msg.get("sender") == "honeypot" and msg.get("text")
+    ]
+    last_honeypot_text = last_honeypot[-1] if last_honeypot else ""
+
+    probes = [
+        ("name", ["name", "who are you"], "Aapka poora naam kya hai?"),
+        ("team", ["team", "department", "bank", "office"], "Aap kis team se bol rahe ho?"),
+        ("callback", ["callback", "call back", "number", "phone"], "Aapka callback number share karo please."),
+        ("reference", ["reference", "ticket", "case id", "complaint"], "Official reference ID kya hai?"),
+        ("reason", ["reason", "purpose", "why", "kisliye"], "Mujhe exact reason samjha do please."),
+    ]
+
+    pending = [
+        prompt for _, keywords, prompt in probes
+        if not any(keyword in user_text for keyword in keywords)
+    ]
+
+    options = pending + ["Verification process step by step samjha do please."]
+    for option in options:
+        if option.lower() != last_honeypot_text:
+            return option
+
+    return "Please details phir se clear karo, mujhe confusion hai."
+
+
 def generate_reply(conversation):
     if not OPENROUTER_API_KEY:
         raise RuntimeError("OPENROUTER_API_KEY is not set")
 
     conversation_history = _recent_history(conversation)
+    next_step = _next_step_from_history(conversation_history)
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
     for msg in conversation_history:
@@ -57,8 +93,9 @@ def generate_reply(conversation):
     messages.append({
         "role": "system",
         "content": (
-            "Keep it short and confused. Ask for their name, team, callback number, "
-            "official reference ID, and reason. Do not share sensitive details."
+            "Keep it short and confused. One short sentence only. "
+            "Do not share sensitive details. "
+            f"Proceed with this next question: {next_step}"
         )
     })
 
@@ -79,7 +116,20 @@ def generate_reply(conversation):
 
         response.raise_for_status()
         reply = response.json()["choices"][0]["message"]["content"].strip()
-        return _sanitize_reply(reply)
+        sanitized = _sanitize_reply(reply)
+
+        if sanitized.lower() == next_step.lower() and conversation_history:
+            return next_step
+
+        last_honeypot = next(
+            (msg["text"].strip().lower() for msg in reversed(conversation_history)
+             if msg.get("sender") == "honeypot" and msg.get("text")),
+            ""
+        )
+        if sanitized.lower() == last_honeypot:
+            return next_step
+
+        return sanitized
 
     except requests.exceptions.RequestException as e:
         print("⚠️ OpenRouter request failed:", e)
