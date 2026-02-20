@@ -1,6 +1,6 @@
 
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Set
 
 
 # Convert digit words -> numbers
@@ -16,69 +16,75 @@ def convert_digit_words(text: str) -> str:
 
 
 def normalize_obfuscation(text: str) -> str:
-    """Convert common character substitutions scammers use."""
+    """Convert common character substitutions scammers use.
+
+    Important: apply substitutions only inside *number-like* spans.
+    We must not translate normal words globally (e.g., "or" -> "0r", "to" -> "t0"),
+    which can create phantom digits and break extraction.
+    """
+
+    # Only map characters typically used to visually spoof digits.
     replacements = str.maketrans({
         "O": "0", "o": "0",
         "I": "1", "l": "1",
-        "S": "5"
+        "S": "5", "s": "5",
     })
-    return text.translate(replacements)
+
+    # Match spans that already contain at least one digit and otherwise look like a phone-ish chunk.
+    # This excludes plain words like "or"/"to" while still catching e.g. "98O65l4321O".
+    span_pattern = re.compile(
+        r"(?<!\w)(?=[0-9OoIlSs\s\-()./]{6,})(?=.*\d)[0-9OoIlSs\s\-()./]{6,}(?!\w)"
+    )
+
+    def _translate_span(match: re.Match) -> str:
+        return match.group(0).translate(replacements)
+
+    return span_pattern.sub(_translate_span, text)
 
 
 def extract_phone_numbers(text: str):
-    def canonical_key(number: str) -> str:
-        digits = re.sub(r"\D", "", number)
-        if len(digits) == 12 and digits.startswith("91"):
-            return digits[2:]
-        return digits
+    def is_obfuscated_split(number: str) -> bool:
+        groups = re.findall(r"\d+", number)
+        # Typical obfuscation: many short digit groups (e.g., "98 76 54 32 10" or "9 8 7 ...").
+        return len(groups) >= 4 and all(len(group) <= 2 for group in groups)
 
-    def format_score(number: str) -> tuple:
-        stripped = number.strip()
-        has_formatting = any(not char.isdigit() for char in stripped)
-        has_plus_prefix = stripped.startswith("+")
-        return (int(has_formatting), int(has_plus_prefix), len(stripped))
+    def clean_candidate(candidate: str) -> Optional[str]:
+        # Trim trailing punctuation that often follows numbers in sentences.
+        stripped = candidate.strip().strip(",;:")
+        digits = re.sub(r"\D", "", stripped)
+        if not (8 <= len(digits) <= 15):
+            return None
 
-    numbers = set()
+        if is_obfuscated_split(stripped):
+            return ("+" + digits) if stripped.startswith("+") else digits
 
-    # Preserve original formatting when number is clearly present in plain text
-    pattern = r"""
-        (?<!\w)
-        (?:\+?\d{1,3}[\s\-()./]*)?
-        (?:\(?\d{2,4}\)?[\s\-()./]*)?
-        \d{2,4}[\s\-()./]*\d{2,4}[\s\-()./]*\d{2,4}
-        (?!\w)
-    """
+        return stripped
 
-    matches = re.findall(pattern, text, re.VERBOSE)
-    for match in matches:
-        cleaned = match.strip()
-        if 8 <= len(re.sub(r"\D", "", cleaned)) <= 15:
+    numbers: Set[str] = set()
+
+    # 1) Extract from the original text (preserve formatting for normal human-written formats).
+    # General pattern: starts with optional '+' or '(' then digits and allowed separators, ends with a digit.
+    general_pattern = re.compile(r"(?<!\w)(\+?\(?\d[\d\s\-()./]{6,}\d\)?)(?!\w)")
+    for match in general_pattern.findall(text):
+        cleaned = clean_candidate(match)
+        if cleaned:
             numbers.add(cleaned)
 
-    # Normalize only for hidden/obfuscated embeddings
+    # 2) Normalize only within number-like spans to catch hidden/obfuscated embeddings,
+    #    then run the same extractor.
     normalized_text = convert_digit_words(normalize_obfuscation(text))
+    for match in general_pattern.findall(normalized_text):
+        cleaned = clean_candidate(match)
+        if cleaned:
+            numbers.add(cleaned)
 
-    # Numbers inside links (WhatsApp, tel, etc.)
+    # 3) Numbers inside links (WhatsApp, tel, etc.)
     numbers.update(re.findall(r"(?:wa\.me/|tel:|\?phone=)(\+?\d{8,15})", normalized_text))
 
-    # Numbers inside UPI handles
+    # 4) Numbers inside UPI handles
     numbers.update(re.findall(r"(\d{8,15})@[a-zA-Z]+", normalized_text))
 
-    # Reconstruct split/obfuscated sequences to normalized digits
-    split_sequences = re.findall(r"(?:\d[\s\-()./]*){8,15}", normalized_text)
-    for sequence in split_sequences:
-        digits = re.sub(r"\D", "", sequence)
-        if 8 <= len(digits) <= 15:
-            numbers.add(digits)
-
-    deduped = {}
-    for number in numbers:
-        key = canonical_key(number)
-        existing = deduped.get(key)
-        if existing is None or format_score(number) > format_score(existing):
-            deduped[key] = number
-
-    return sorted(deduped.values())
+    return sorted(numbers)
 
 def extract_intelligence(messages: List[Dict], store: dict):
     """Extract intelligence from scammer messages only"""
@@ -99,18 +105,15 @@ def extract_intelligence(messages: List[Dict], store: dict):
 
 
     # Extract email addresses (must include a domain + TLD)
-    # Generalized email extraction
-    EMAIL_PATTERN = r"(?<![\w@])([^\s@]+@[^\s@]+\.[^\s@]+)"
+    # Use a strict token pattern to avoid capturing entire URLs that contain an email as a parameter.
+    EMAIL_PATTERN = r"(?i)(?<![a-z0-9._%+\-])([a-z0-9._%+\-]+@[a-z0-9.\-]+\.[a-z]{2,})(?![a-z0-9._%+\-])"
 
     matches = re.findall(EMAIL_PATTERN, scammer_text)
 
-    # normalize & validate
+    # normalize
     for email in matches:
-        email = email.lower().strip()
-
-        # basic validation to reduce noise
-        if email.count("@") == 1 and "." in email.split("@")[1]:
-            email_addresses.add(email)
+        email = email.lower().strip().strip(",;:.")
+        email_addresses.add(email)
     
     # Extract UPI IDs (handle is usually not a full email domain)
     upi_matches = re.findall(r"\b[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9._-]{2,}\b", scammer_text)
