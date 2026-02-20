@@ -2,6 +2,59 @@
 import re
 from typing import List, Dict
 
+
+# Convert digit words -> numbers
+DIGIT_WORDS = {
+    "zero": "0", "one": "1", "two": "2", "three": "3", "four": "4",
+    "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9"
+}
+
+
+def convert_digit_words(text: str) -> str:
+    pattern = re.compile(r"\b(" + "|".join(DIGIT_WORDS.keys()) + r")\b", re.IGNORECASE)
+    return pattern.sub(lambda match: DIGIT_WORDS[match.group().lower()], text)
+
+
+def normalize_obfuscation(text: str) -> str:
+    """Convert common character substitutions scammers use."""
+    replacements = str.maketrans({
+        "O": "0", "o": "0",
+        "I": "1", "l": "1",
+        "S": "5"
+    })
+    return text.translate(replacements)
+
+
+def extract_phone_numbers(text: str):
+    text = normalize_obfuscation(text)
+    text = convert_digit_words(text)
+
+    numbers = set()
+
+    # Numbers inside links (WhatsApp, tel, etc.)
+    numbers.update(re.findall(r"(?:wa\.me/|tel:|\?phone=)(\+?\d{8,15})", text))
+
+    # Numbers inside UPI handles
+    numbers.update(re.findall(r"(\d{8,15})@[a-zA-Z]+", text))
+
+    # General global phone formats
+    pattern = r"""
+        (?<!\w)
+        (?:\+?\d{1,3}[\s\-()./]*)?     # optional country code
+        (?:\(?\d{2,4}\)?[\s\-()./]*)?  # optional area code
+        \d{2,4}[\s\-()./]*\d{2,4}[\s\-()./]*\d{2,4}
+        (?!\w)
+    """
+
+    matches = re.findall(pattern, text, re.VERBOSE)
+
+    for match in matches:
+        digits = re.sub(r"\D", "", match)
+        if 8 <= len(digits) <= 15:
+            numbers.add(digits)
+
+    return sorted(numbers)
+
 def extract_intelligence(messages: List[Dict], store: dict):
     """Extract intelligence from scammer messages only"""
     
@@ -14,10 +67,11 @@ def extract_intelligence(messages: List[Dict], store: dict):
     suspicious_keywords = set(store.get("suspiciousKeywords", []))
     
     # Extract only from messages with sender="scammer"
-    scammer_text = " ".join([msg["text"] for msg in messages if msg.get("sender", "").lower() == "scammer"])
-    
-    if not scammer_text:
-        return
+    scammer_text = " ".join(
+        str(msg.get("text",""))
+        for msg in messages
+    )
+
 
     # Extract email addresses (must include a domain + TLD)
     # Generalized email extraction
@@ -41,10 +95,8 @@ def extract_intelligence(messages: List[Dict], store: dict):
     accounts = re.findall(r"\b\d{12,18}\b", scammer_text)
     bank_accounts.update(accounts)
     
-    # Extract phone numbers (Indian format with optional separators)
-    phones = re.findall(r"(?:\+91[-\s]?)?[6-9]\d{9}\b", scammer_text)
-    normalized_phones = [re.sub(r"[\s-]", "", phone).strip() for phone in phones]
-    phone_numbers.update(normalized_phones)
+    # Extract globally formatted phone numbers (with obfuscation normalization)
+    phone_numbers.update(extract_phone_numbers(scammer_text))
     
     # Extract URLs
     links = re.findall(r"https?://[^\s]+", scammer_text)
