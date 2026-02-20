@@ -20,8 +20,18 @@ def extract_intelligence(messages: List[Dict], store: dict):
         return
 
     # Extract email addresses (must include a domain + TLD)
-    email_matches = re.findall(r"\b[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[A-Za-z]{2,}\b", scammer_text)
-    email_addresses.update(email_matches)
+    # Generalized email extraction
+    EMAIL_PATTERN = r"(?<![\w@])([^\s@]+@[^\s@]+\.[^\s@]+)"
+
+    matches = re.findall(EMAIL_PATTERN, scammer_text)
+
+    # normalize & validate
+    for email in matches:
+        email = email.lower().strip()
+
+        # basic validation to reduce noise
+        if email.count("@") == 1 and "." in email.split("@")[1]:
+            email_addresses.add(email)
     
     # Extract UPI IDs (handle is usually not a full email domain)
     upi_matches = re.findall(r"\b[a-zA-Z0-9._-]{2,}@[a-zA-Z0-9._-]{2,}\b", scammer_text)
