@@ -26,34 +26,59 @@ def normalize_obfuscation(text: str) -> str:
 
 
 def extract_phone_numbers(text: str):
-    text = normalize_obfuscation(text)
-    text = convert_digit_words(text)
+    def canonical_key(number: str) -> str:
+        digits = re.sub(r"\D", "", number)
+        if len(digits) == 12 and digits.startswith("91"):
+            return digits[2:]
+        return digits
+
+    def format_score(number: str) -> tuple:
+        stripped = number.strip()
+        has_formatting = any(not char.isdigit() for char in stripped)
+        has_plus_prefix = stripped.startswith("+")
+        return (int(has_formatting), int(has_plus_prefix), len(stripped))
 
     numbers = set()
 
-    # Numbers inside links (WhatsApp, tel, etc.)
-    numbers.update(re.findall(r"(?:wa\.me/|tel:|\?phone=)(\+?\d{8,15})", text))
-
-    # Numbers inside UPI handles
-    numbers.update(re.findall(r"(\d{8,15})@[a-zA-Z]+", text))
-
-    # General global phone formats
+    # Preserve original formatting when number is clearly present in plain text
     pattern = r"""
         (?<!\w)
-        (?:\+?\d{1,3}[\s\-()./]*)?     # optional country code
-        (?:\(?\d{2,4}\)?[\s\-()./]*)?  # optional area code
+        (?:\+?\d{1,3}[\s\-()./]*)?
+        (?:\(?\d{2,4}\)?[\s\-()./]*)?
         \d{2,4}[\s\-()./]*\d{2,4}[\s\-()./]*\d{2,4}
         (?!\w)
     """
 
     matches = re.findall(pattern, text, re.VERBOSE)
-
     for match in matches:
-        digits = re.sub(r"\D", "", match)
+        cleaned = match.strip()
+        if 8 <= len(re.sub(r"\D", "", cleaned)) <= 15:
+            numbers.add(cleaned)
+
+    # Normalize only for hidden/obfuscated embeddings
+    normalized_text = convert_digit_words(normalize_obfuscation(text))
+
+    # Numbers inside links (WhatsApp, tel, etc.)
+    numbers.update(re.findall(r"(?:wa\.me/|tel:|\?phone=)(\+?\d{8,15})", normalized_text))
+
+    # Numbers inside UPI handles
+    numbers.update(re.findall(r"(\d{8,15})@[a-zA-Z]+", normalized_text))
+
+    # Reconstruct split/obfuscated sequences to normalized digits
+    split_sequences = re.findall(r"(?:\d[\s\-()./]*){8,15}", normalized_text)
+    for sequence in split_sequences:
+        digits = re.sub(r"\D", "", sequence)
         if 8 <= len(digits) <= 15:
             numbers.add(digits)
 
-    return sorted(numbers)
+    deduped = {}
+    for number in numbers:
+        key = canonical_key(number)
+        existing = deduped.get(key)
+        if existing is None or format_score(number) > format_score(existing):
+            deduped[key] = number
+
+    return sorted(deduped.values())
 
 def extract_intelligence(messages: List[Dict], store: dict):
     """Extract intelligence from scammer messages only"""
